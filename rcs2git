@@ -115,6 +115,12 @@ sub git_commit ($$) {
 	cmd(@cmd);
 }
 
+sub setperms ($@) {
+	my ($file, @stat) = @_;
+	chmod $stat[2] | 0200, $file;
+	chown $stat[4], $stat[5], $file;
+}
+
 sub convert_rcs_file ($) {
 	my ($file) = @_;
 	my $data = rcs_log($file);
@@ -124,16 +130,19 @@ sub convert_rcs_file ($) {
 		$data->{log}[0]{message} = $data->{desc} . "\n\n" . $data->{log}[0]{message};
 	}
 	my $current = read_file($file);
+	my @stat = stat $file;
 	eval {
 		foreach my $entry (@{$data->{log}}) {
 			$entry->{date} = rcs_date_to_git_date($entry->{date});
 			rcs_checkout($file, $entry->{rev});
+			setperms($file, @stat);
 			git_commit($file, $entry);
 		}
 	};
 	my $eval_error = $@;
 	# Always write the original content of the file, in case of failure
 	write_file($file, $current);
+	setperms($file, @stat);
 	if ($eval_error) {
 		die "Failure during conversion of $file: $@";
 	} elsif (`git diff | wc -l` > 0) {
