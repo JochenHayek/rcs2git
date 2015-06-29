@@ -1,0 +1,167 @@
+#! /usr/bin/perl
+use strict;
+use warnings;
+use File::Find;
+
+sub read_until_sep ($) {
+	my ($fd) = @_;
+	my $buf = "";
+	while (<$fd>) {
+		if (/^-{28}$/ || /^={77}$/) {
+			my $next_line = <$fd>;
+			if (!defined $next_line || $next_line =~ /^revision ([\d.]+)/) {
+				return ($buf, $1);
+			} else {
+				$buf .= $_.$next_line;
+			}
+		} else {
+			$buf .= $_;
+		}
+	}
+	return ($buf, undef);
+}
+
+sub rcs_log ($) {
+	my ($file) = $_;
+	open (my $fd, "-|", "rlog", $file) or die "Unable to execute rlog $file: $!";
+	# Fast forward to description
+	while (<$fd>) {
+		last if /^description:/;
+	}
+	chomp(my ($desc, $next_rev) = read_until_sep($fd));
+	my @log;
+	while (defined $next_rev) {
+		my $header = <$fd>;
+		if (defined $header && $header =~ /^date: ([^;]+);  author: ([^;]+);/) {
+			my $date = $1;
+			my $author = $2;
+			my $rev = $next_rev;
+			my $message;
+			($message, $next_rev) = read_until_sep($fd);
+			chomp $message;
+			push @log, {
+				date => $date,
+				author => $author,
+				rev => $rev,
+				message => $message };
+		} else {
+			die "Logic error, no header found"
+		}
+	}
+	@log = reverse @log;
+	my %data = ( desc => $desc, log => \@log );
+	close $fd;
+	return \%data;
+}
+
+sub rcs_user_to_git_user($) {
+	my ($user) = @_;
+
+	chomp(my $domain = `hostname -d`);
+	$domain = "localhost" unless $domain;
+
+	my $gcos = $user;
+	my @user_data = getpwnam($user);
+	if (@user_data && $user_data[6]) {
+		$gcos = $user_data[6];
+		$gcos =~ s/,.*//;
+	}
+
+	return "$gcos <$user\@$domain>";
+}
+
+sub rcs_date_to_git_date ($) {
+	my ($date) = @_;
+	$date =~ y,/,-,;
+	my ($year, $rest) = split("-", $date, 2);
+	$year += 100 if ($year < 1950); # Compensate for y2k bugs
+	return "$year-$rest";
+}
+
+sub read_file ($) {
+	my ($file) = @_;
+	open (my $fd, $file) or die "Unable to open $file for reading: $!";
+	local $/ = undef; # Slurp mode
+	my $data = <$fd>;
+	close $fd;
+	return $data;
+}
+
+sub write_file ($$) {
+	open (my $fd, ">", $_[0]) or die "Unable to open $_[0] for writing: $!"; 
+	print $fd $_[1];
+	close $fd;
+}
+
+sub cmd (@) {
+	my $str_cmd = join(" ", map { my $s = $_; $s = "\"$_\"" if $s =~ / /; $s } @_);
+	print STDERR "+ $str_cmd\n";
+	my $exit_status = system(@_);
+	die "Failed to execute $str_cmd: Process exited with status $exit_status" if $exit_status != 0;
+}
+
+sub rcs_checkout ($$) {
+	my ($file, $rev) = @_;
+	cmd("co", "-f", "-r$rev", $file);
+}
+
+sub git_commit ($$) {
+	my ($file, $data) = @_;
+	cmd("git", "add", $file);
+	my @cmd = qw(git commit --allow-empty-message --allow-empty);
+	push @cmd, "--message", ($data->{message} ? $data->{message} : "");
+	push @cmd, "--author", rcs_user_to_git_user($data->{author}) if ($data->{author});
+	push @cmd, "--date", $data->{date} if ($data->{date});
+	cmd(@cmd);
+}
+
+sub convert_rcs_file ($) {
+	my ($file) = @_;
+	my $data = rcs_log($file);
+	if ($data->{log}[0]{message} eq "Initial revision") {
+		$data->{log}[0]{message} = $data->{desc};
+	} else {
+		$data->{log}[0]{message} = $data->{desc} . "\n\n" . $data->{log}[0]{message};
+	}
+	my $current = read_file($file);
+	eval {
+		foreach my $entry (@{$data->{log}}) {
+			$entry->{date} = rcs_date_to_git_date($entry->{date});
+			rcs_checkout($file, $entry->{rev});
+			git_commit($file, $entry);
+		}
+	};
+	my $eval_error = $@;
+	# Always write the original content of the file, in case of failure
+	write_file($file, $current);
+	if ($eval_error) {
+		die "Failure during conversion of $file: $@";
+	} elsif (`git diff | wc -l` > 0) {
+		git_commit($file, { message => "Uncommitted changes" });
+	}
+}
+
+sub convert_untracked_file ($) {
+	my ($file) = @_;
+	git_commit($file, { message => "Adding previously untracked file" });
+}
+
+if (scalar @ARGV != 0) {
+	print STDERR "This command is designed to convert a directory tree in-place.\n";
+	print STDERR "To use it, make a copy of the directory tree, enter it, and run this script.\n";
+	exit 1;
+}
+
+find(sub {
+	return if /,v$/;
+	return if -l $_ || -d $_;
+	return if $File::Find::name =~ m,^\./\.git/,;
+	if (-e "$_,v" || -e "RCS/$_,v") {
+		print "Converting RCS tracked file $File::Find::name\n";
+		convert_rcs_file($_);
+	} else {
+		print "Converting untracked file $File::Find::name\n";
+		convert_untracked_file($_);
+	}
+}, qw(.));
+
