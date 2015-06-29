@@ -2,11 +2,30 @@
 use strict;
 use warnings;
 use File::Find;
+use Encode;
+use Encode::Guess;
+
+sub fix_charset($) {
+        my ($data) = @_;
+        my $enc = guess_encoding($data, qw/"iso-8859-1/);
+	if (!ref($enc)) {
+		if ($enc eq "iso-8859-1 or utf8") {
+			return $data;
+		} elsif ($enc eq "No appropriate encodings found!") {
+			# No idea what's going on here, just strip off non-ascii data
+			$data =~ s/[\x80-\xff]//g;
+			return $data;
+		}
+	}
+        ref($enc) or die "Can't guess: $enc for $data"; # trap error this way
+        return encode("utf8", $enc->decode($data));
+}
 
 sub read_until_sep ($) {
 	my ($fd) = @_;
 	my $buf = "";
 	while (<$fd>) {
+		$_ = fix_charset($_);
 		if (/^-{28}$/ || /^={77}$/) {
 			my $next_line = <$fd>;
 			if (!defined $next_line || $next_line =~ /^revision ([\d.]+)/) {
