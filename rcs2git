@@ -169,9 +169,9 @@ sub convert_rcs_file ($) {
 	}
 }
 
-sub convert_untracked_file ($) {
-	my ($file) = @_;
-	git_commit($file, { message => "Adding previously untracked file" });
+sub convert_untracked_file ($$) {
+	my ($file, $fullname) = @_;
+	git_commit($file, { message => "Adding previously untracked file $fullname" });
 }
 
 if (scalar @ARGV != 0) {
@@ -189,7 +189,7 @@ find(sub {
 		convert_rcs_file($_);
 	} else {
 		print "Converting untracked file $File::Find::name\n";
-		convert_untracked_file($_);
+		convert_untracked_file($_, $File::Find::name);
 	}
 }, qw(.));
 
