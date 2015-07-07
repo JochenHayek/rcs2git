@@ -21,3 +21,8 @@ cp -a folder-copy/.git folder-git
 # Sanity check
 diff -ur folder folder-git
 ```
+
+# Alternatives
+There are other RCS to Git converters out there, which may or may not work better for your use-case. These are the ones I know of:
+
+ - https://github.com/Oblomov/rcs-fast-export
