@@ -1,9 +1,18 @@
-#! /usr/bin/perl
+#! /usr/bin/perl -s
+
+# usage:
+#
+#   ~/git-servers/github.com/knuta/rcs2git/rcs2git -authors_file=$HOME/etc/users.txt …
+
 use strict;
 use warnings;
 use File::Find;
 use Encode;
 use Encode::Guess;
+
+our($authors_file);
+
+our(%table_authors);
 
 sub fix_charset($) {
         my ($data) = @_;
@@ -41,7 +50,13 @@ sub read_until_sep ($) {
 }
 
 sub rcs_log ($) {
-	my ($file) = $_;
+	my ($file) = @_;
+
+	printf STDERR "=%03.3d: %s=>{%s} // %s\n",__LINE__,
+	  '$file' => $file,
+	  '...'
+	  if 0;
+
 	open (my $fd, "-|", "rlog", $file) or die "Unable to execute rlog $file: $!";
 	# Fast forward to description
 	while (<$fd>) {
@@ -73,20 +88,73 @@ sub rcs_log ($) {
 	return \%data;
 }
 
+sub init_authors_file
+{
+  my($package,$filename,$line,$proc_name) = caller(0);
+
+  my(%param) = @_;
+
+  # $param{authors_file}
+  # $param{...}
+
+  my($return_value) = 0;
+
+  my($fh_authors_file);
+  open($fh_authors_file,$param{authors_file}) || die "cannot open: {$param{authors_file}}";
+
+  while(<$fh_authors_file>)
+    {
+      chomp;
+
+      m/^#/ && next;
+
+      if(m/^ (?<lhs>\w+) \s* = \s* (?<rhs> (?<name>.*?) \s* <(?<address>.*>) ) $ /x)
+	{
+	  my(%plus) = %+;
+
+	  printf STDERR "=%03.3d: %s=>{%s} // %s\n",__LINE__,
+	    '$_' => $_,
+	    '...'
+	    if 0;
+
+	  printf STDERR "=%03.3d: %s=>{%s},%s=>{%s} // %s\n",__LINE__,
+	    '$plus{lhs}' => $plus{lhs},
+	  ##'$plus{name}' => $plus{name},
+	    '$plus{rhs}' => $plus{rhs},
+	    '...'
+	    if 0;
+
+	  $main::table_authors{ $plus{lhs} } = $plus{rhs};
+	}
+    }
+
+  close($fh_authors_file);
+
+  return $return_value;
+}
+
 sub rcs_user_to_git_user($) {
 	my ($user) = @_;
 
-	chomp(my $domain = `hostname -d`);
-	$domain = "localhost" unless $domain;
+	if(exists($main::table_authors{$user}))
+	  {
+	    return $main::table_authors{$user};
+	  }
+	else
+	  {
+	    my $domain;
+	  ##chomp($domain = `hostname -d`); # OS X does not have "-d" at all, my "Synologies" only yield ''
+	    $domain = "localhost" unless $domain;
 
-	my $gcos = $user;
-	my @user_data = getpwnam($user);
-	if (@user_data && $user_data[6]) {
-		$gcos = $user_data[6];
-		$gcos =~ s/,.*//;
-	}
+	    my $gcos = $user;
+	    my @user_data = getpwnam($user);
+	    if (@user_data && $user_data[6]) {
+		    $gcos = $user_data[6];
+		    $gcos =~ s/,.*//;
+	    }
 
-	return "$gcos <$user\@$domain>";
+	    return "$gcos <$user\@$domain>";
+	  }
 }
 
 sub rcs_date_to_git_date ($) {
@@ -107,7 +175,7 @@ sub read_file ($) {
 }
 
 sub write_file ($$) {
-	open (my $fd, ">", $_[0]) or die "Unable to open $_[0] for writing: $!"; 
+	open (my $fd, ">", $_[0]) or die "Unable to open $_[0] for writing: $!";
 	print $fd $_[1];
 	close $fd;
 }
@@ -142,6 +210,12 @@ sub setperms ($@) {
 
 sub convert_rcs_file ($) {
 	my ($file) = @_;
+
+	printf STDERR "=%03.3d: %s=>{%s} // %s\n",__LINE__,
+	  '$file' => $file,
+	  '...'
+	  if 0;
+
 	my $data = rcs_log($file);
 	if ($data->{log}[0]{message} eq "Initial revision") {
 		$data->{log}[0]{message} = $data->{desc};
@@ -167,6 +241,34 @@ sub convert_rcs_file ($) {
 	} elsif (`git diff | wc -l` > 0) {
 		git_commit($file, { message => "Uncommitted changes" });
 	}
+}
+
+{
+  # -authors_file=$HOME/etc/users.txt
+  if(defined($main::authors_file))
+    {
+      printf STDERR "=%03.3d: %s=>{%s} // %s\n",__LINE__,
+	'$main::authors_file' => $main::authors_file,
+	'...'
+	if 1;
+      init_authors_file( 'authors_file' => $main::authors_file );
+    }
+
+  foreach my $arg (@ARGV)
+    {
+      printf STDERR "=%03.3d: %s=>{%s} // %s\n",__LINE__,
+	'$arg' => $arg,
+	'...'
+	if 0;
+
+      if(-e "${arg},v" || -e "RCS/${arg},v" || -e "RCS/${arg}")
+	{
+	  print "Converting RCS tracked file ${arg}\n";
+	  convert_rcs_file(${arg});
+	}
+    }
+
+  exit(0);
 }
 
 sub convert_untracked_file ($$) {
