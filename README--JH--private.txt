@@ -1,0 +1,9 @@
+# ...
+
+...
+
+  perl -ne 'm/^date\s+(.*);\s+author\s+(?<author>.*);\s+state\s+(.*);/ && print "$+{author} = $+{author} <$+{author}\@DOMAIN>\n"' RCS/* | sort -u
+
+...
+
+  ~/git-servers/github.com/JochenHayek/rcs2git/rcs2git -authors_file=$HOME/etc/users.txt …

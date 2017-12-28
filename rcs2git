@@ -2,7 +2,7 @@
 
 # usage:
 #
-#   ~/git-servers/github.com/knuta/rcs2git/rcs2git -authors_file=$HOME/etc/users.txt …
+#   ~/git-servers/github.com/JochenHayek/rcs2git/rcs2git -authors_file=$HOME/etc/users.txt …
 
 use strict;
 use warnings;
